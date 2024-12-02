@@ -1,0 +1,94 @@
+# Ensure all strategy classes are defined
+strategies = [
+    MovingAverageRibbonStrategy,
+    SuperTrendStrategy,
+    VolatilityBreakoutStrategy,
+    MFI_Strategy,
+    VPT_Strategy,
+    HeikinAshiStrategy,
+    RenkoStrategy,
+    MeanReversionBBandRSI,
+    DualMovingAverage
+]
+
+# Create a dictionary to store results for each strategy
+strategy_results = {}
+
+# Allocate cash equally among strategies
+cash_per_strategy = cash_in_hand / len(strategies)
+    
+# Allocate cash equally among stocks in the strategy
+cash_per_stock = cash_per_strategy / len(holdings)
+
+# Loop through each strategy
+for strategy in strategies:
+    strategy_name = strategy.__name__
+    print(f"Backtesting strategy: {strategy_name}")
+    
+    # Initialize total gain for the strategy
+    total_start_value = 0
+    total_end_value = 0
+    total_return_pct = 0
+    
+    # Create a DataFrame to store yearly returns for each stock
+    yearly_returns_df = pd.DataFrame()
+    
+    # Backtest the strategy for each stock in holdings
+    for ticker in holdings:
+        # Download historical data for backtesting
+        df = get_stock_data(ticker, start_date, end_date, '1d')
+        
+        # Backtest the strategy
+        bt = Backtest(df, strategy, cash=cash_per_stock, commission=brokerage)
+        stats = bt.run()
+
+        # Add ticker symbol to the stats
+        stock_stats = stats.to_dict()
+        stock_stats['Ticker'] = ticker
+        del stock_stats['_equity_curve']
+        del stock_stats['_trades']
+        all_stats.append(stock_stats)
+        
+        # Extract the equity curve and calculate yearly returns
+        equity_curve = stats['_equity_curve']['Equity']
+        yearly_returns = equity_curve.resample('Y').last().pct_change().fillna(0) * 100
+        
+        # Ensure the DataFrame has all years from start_date to end_date
+        all_years = pd.date_range(start=start_date, end=end_date, freq='Y')
+        yearly_returns = yearly_returns.reindex(all_years, fill_value=0)
+        
+        yearly_returns_df[ticker] = yearly_returns.values
+
+        # Calculate metrics for the stock
+        stock_metrics = calculate_metrics(stats._strategy.trades_df, df, start_date, end_date, initial_value, display_output=False)
+        total_start_value += stock_metrics["Start Value"]
+        total_end_value += stock_metrics["End Value"]
+        total_return_pct += stock_metrics["Return %"]
+    
+    # Calculate the average yearly returns across all stocks for the strategy
+    average_yearly_returns = yearly_returns_df.mean(axis=1)
+    
+    # Create a DataFrame with "Date" and "Average Yearly Returns (%)"
+    average_yearly_returns_df = pd.DataFrame({
+        'Date': yearly_returns_df.index,
+        'Average Yearly Returns (%)': average_yearly_returns
+    })
+    
+    # Calculate overall metrics for the strategy
+    overall_return_pct = (total_end_value - total_start_value) / total_start_value * 100 if total_start_value else 0
+    
+    # Store the results in the dictionary
+    strategy_results[strategy_name] = {
+        'Average Yearly Returns': average_yearly_returns_df,
+        'Start Value': total_start_value,
+        'End Value': total_end_value,
+        'Return %': overall_return_pct
+    }
+
+# Convert the strategy_results dictionary into a DataFrame
+results_df = pd.DataFrame.from_dict(strategy_results, orient='index')
+results_df = results_df.drop(columns='Average Yearly Returns')  # Dropping the column 'Average Yearly Returns' for simplification
+
+# Display the resulting DataFrame
+print("\nSummary DataFrame for All Strategies:")
+beautiful_print(results_df)
